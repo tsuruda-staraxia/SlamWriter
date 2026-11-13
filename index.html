@@ -76,8 +76,10 @@
   .fav.on{background:rgba(60,157,255,.14)}
   .fav .pl{width:34px;height:28px;padding:0;border-radius:999px;flex:none}
   .fav.on .pl{background:var(--accent2);border-color:var(--accent2);color:#fff}
-  .fav .t{font-weight:600;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .fav .u{color:#ff7aa8;white-space:nowrap}
+  .fav .u{color:#ff7aa8;font-weight:700;white-space:nowrap;min-width:90px;max-width:160px;overflow:hidden;text-overflow:ellipsis}
+  .fav .spec{display:flex;flex-wrap:wrap;gap:5px;min-width:0}
+  .chip{font-size:11px;line-height:18px;padding:0 8px;border-radius:999px;background:#34343a;color:#c9c9d0;white-space:nowrap}
+  .chip.bpm{background:var(--accent);color:#fff;font-weight:700}
   .fav .m{color:var(--dim);font-size:12px;white-space:nowrap;margin-left:auto}
   .fav .del{padding:1px 7px;color:var(--dim)}
   .fav.empty{color:var(--dim);justify-content:center;padding:18px}
@@ -96,7 +98,7 @@
   <h1>SLAM<span>WRITER</span><small>by Shogo Tsuruda</small></h1>
   <button id="play" class="primary">▶ Play</button>
   <button id="auto" title="Randomize style, chords, density and drums, then generate"><span class="dice">🎲</span>Randomize All</button>
-  <button id="fav" title="Save the current riff to the shared favorites list">♥ Save to Favorites</button>
+  <button id="fav" title="Save the current riff to the shared favorites list (one click, no title needed)">♥ Save to Favorites</button>
   <label><input type="checkbox" id="loop" checked>Loop</label>
   <label>BPM <input type="number" id="bpm" min="40" max="300"></label>
   <label>Bars <input type="number" id="bars" min="1" max="16"></label>
@@ -147,15 +149,9 @@
 
 <dialog id="nameDlg"><form method="dialog">
   <h3>Your user name</h3>
-  <p>Shown next to the riffs you save to the shared favorites list. You can change it later.</p>
+  <p>Shown next to the riffs you save to the shared favorites list. Remembered on this device; you can change it later.</p>
   <input type="text" id="nameInput" maxlength="24" placeholder="e.g. riffmaster" autocomplete="off">
-  <div class="btns"><button value="cancel">Later</button><button value="ok" class="primary">OK</button></div>
-</form></dialog>
-<dialog id="saveDlg"><form method="dialog">
-  <h3>Save to Favorites</h3>
-  <p>Everyone using SlamWriter will see this riff and can play it.</p>
-  <input type="text" id="titleInput" maxlength="48" placeholder="Title" autocomplete="off">
-  <div class="btns"><button value="cancel">Cancel</button><button value="ok" class="primary">♥ Save</button></div>
+  <div class="btns"><button type="button" id="nameLater">Later</button><button value="ok" class="primary">OK</button></div>
 </form></dialog>
 
 <div class="help">
@@ -212,7 +208,7 @@ function undo(){ if(!undoStack.length) return; song = JSON.parse(undoStack.pop()
 function changed(full){ compile(); save(); if(full) render(); }
 
 function resize(bars, res){
-  const old = song, n = blankSong(bars,res); n.bpm = old.bpm;
+  const old = song, n = blankSong(bars,res); n.bpm = old.bpm; if(old.gen) n.gen = old.gen;
   for(let b=0;b<Math.min(bars,old.bars);b++){
     n.drums[b] = old.drums[b];
     for(let i=0;i<old.res;i++){
@@ -686,6 +682,7 @@ function writeBar(b, bar){
 }
 function generate(list){
   const o = readOpts(), R = song.res, pool = makePool(o);
+  song.gen = {style:o.style, chord:o.chord, density:o.density, max:o.max, pm:o.pm};   // shown as the riff's spec when shared
   const P = o.repeat ? Math.min(2,list.length) : list.length;
   const phrase = Array.from({length:P},()=>genBar(o,pool));
   list.forEach((b,i)=>{
@@ -773,7 +770,11 @@ $('dApply').onclick = () => { pushUndo(); song.drums.forEach(d=>{ d.pat=$('dAll'
 /* ---------------- shared favorites ---------------- */
 const API = 'https://slamwriter-api.tsuruda-282.workers.dev';
 const store = { get:k=>{ try{ return localStorage.getItem(k); }catch(e){ return null; } }, set:(k,v)=>{ try{ localStorage.setItem(k,v); }catch(e){} } };
-let userName = store.get('slamwriter.user') || '', favs = [], favPlaying = null;
+// the user name is kept in localStorage and mirrored to a 1-year cookie, whichever survives
+const cookie = { get:k=>{ const m=document.cookie.match(new RegExp('(?:^|; )'+k+'=([^;]*)')); return m?decodeURIComponent(m[1]):''; },
+                 set:(k,v)=>{ document.cookie = `${k}=${encodeURIComponent(v)}; max-age=31536000; path=/; SameSite=Lax`; } };
+const STYLES = {quarter:'Quarter-note chords', chug:'Chug', slam:'Slam', tremolo:'Tremolo'}, CHORDS = {diss:'Dissonant', power:'Power chords', mix:'Mixed'};
+let userName = store.get('slamwriter.user') || cookie.get('sw_user') || '', favs = [], favPlaying = null;
 const myToken = () => { let t = store.get('slamwriter.token'); if(!t){ t = crypto.randomUUID()+crypto.randomUUID(); store.set('slamwriter.token',t); } return t; };
 const myIds = () => { try{ return JSON.parse(store.get('slamwriter.mine')) || []; }catch(e){ return []; } };
 const favMsg = (t, keep) => { $('favMsg').textContent = t; if(!keep) setTimeout(()=>{ if($('favMsg').textContent===t) $('favMsg').textContent=''; }, 4000); };
@@ -784,7 +785,9 @@ function pack(s){
     for(let st=0;st<7;st++) if(s.grid[st][c]!=null) n.push([c,st,s.grid[st][c]]);
     if(s.pm[c]) pm.push(c); if(s.rest[c]) r.push(c);
   }
-  return {v:1, bpm:s.bpm, bars:s.bars, res:s.res, n, pm, r, d:s.drums.map(d=>[d.pat,d.x2?1:0,d.cym])};
+  const p = {v:1, bpm:s.bpm, bars:s.bars, res:s.res, n, pm, r, d:s.drums.map(d=>[d.pat,d.x2?1:0,d.cym])};
+  if(s.gen) p.g = {s:s.gen.style, c:s.gen.chord, d:s.gen.density, m:Math.min(12,s.gen.max), p:s.gen.pm};
+  return p;
 }
 function unpack(p){
   const int = (v,lo,hi,def)=>Number.isInteger(v)&&v>=lo&&v<=hi?v:def;
@@ -794,6 +797,7 @@ function unpack(p){
   for(const c of p.pm||[]) if(int(c,0,C-1,-1)>=0) s.pm[c] = true;
   for(const c of p.r||[]) if(int(c,0,C-1,-1)>=0) s.rest[c] = true;
   (p.d||[]).slice(0,s.bars).forEach((d,i)=>{ if(PATS[d[0]] && CYMS[d[2]]) s.drums[i] = {pat:d[0], x2:!!d[1], cym:d[2]}; });
+  const g = p.g; if(g && STYLES[g.s] && CHORDS[g.c]) s.gen = {style:g.s, chord:g.c, density:int(g.d,1,5,3), max:int(g.m,1,12,5), pm:+g.p||0};
   return s;
 }
 function showWho(){ $('who').innerHTML = ''; $('who').append('👤 '); const b = document.createElement('b'); b.textContent = userName || 'Set name'; $('who').append(b); }
@@ -802,17 +806,10 @@ function askName(){
     const d = $('nameDlg'); $('nameInput').value = userName; d.returnValue = '';
     d.onclose = () => {
       const v = $('nameInput').value.trim().slice(0,24);
-      if(d.returnValue==='ok' && v){ userName = v; store.set('slamwriter.user',v); showWho(); }
+      if(d.returnValue==='ok' && v){ userName = v; store.set('slamwriter.user',v); cookie.set('sw_user',v); showWho(); }
       res(userName);
     };
     d.showModal(); $('nameInput').select();
-  });
-}
-function askTitle(){
-  return new Promise(res=>{
-    const d = $('saveDlg'); $('titleInput').value = `Riff ${song.bpm} BPM`; d.returnValue = '';
-    d.onclose = () => res(d.returnValue==='ok' ? ($('titleInput').value.trim() || 'Untitled') : null);
-    d.showModal(); $('titleInput').select();
   });
 }
 async function loadFavs(){
@@ -825,11 +822,10 @@ async function saveFav(){
   const p = pack(song);
   if(!p.n.length) return favMsg('Nothing to save yet — write or generate a riff first.');
   if(!userName && !(await askName())) return;
-  const title = await askTitle(); if(title===null) return;
   favMsg('Saving…', true);
   try{
     const r = await fetch(API+'/riffs', {method:'POST', headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({user:userName, title, song:p, token:myToken()})});
+      body:JSON.stringify({user:userName, title:'', song:p, token:myToken()})});
     const j = await r.json(); if(!r.ok) throw new Error(j.error||'error');
     store.set('slamwriter.mine', JSON.stringify(myIds().concat(j.riff.id)));
     favs.unshift(j.riff); renderFavs(); favMsg('Saved to Shared Favorites ♥');
@@ -848,7 +844,9 @@ function playFav(id){
   const f = favs.find(x=>x.id===id); if(!f) return;
   if(favPlaying===id && playing) return stop();
   if(playing) stop();
-  pushUndo(); song = unpack(f.song); cursor = {s:0,c:0}; changed(true);
+  pushUndo(); song = unpack(f.song); cursor = {s:0,c:0};
+  if(song.gen){ $('gStyle').value=song.gen.style; $('gChord').value=song.gen.chord; $('gDensity').value=song.gen.density; $('gMax').value=song.gen.max; $('gPm').value=song.gen.pm; }
+  changed(true);
   favPlaying = id; markFavs(); start();
 }
 function renderFavs(){
@@ -859,8 +857,13 @@ function renderFavs(){
   for(const f of favs){
     const row = el('div','fav'); row.dataset.id = f.id;
     const pl = el('button','pl','▶'); pl.title = 'Load into the editor and play';
-    row.append(pl, el('span','t',f.title), el('span','u','by '+f.user),
-      el('span','m',`${f.song.bpm} BPM · ${f.song.bars} bar${f.song.bars>1?'s':''} · ${new Date(f.created_at).toLocaleDateString()}`));
+    const g = f.song.g, spec = el('span','spec'), chip = (t,c)=>spec.append(el('span','chip'+(c?' '+c:''),t));
+    chip(f.song.bpm+' BPM','bpm');
+    if(g && STYLES[g.s]){ chip(STYLES[g.s]); chip(CHORDS[g.c]||''); chip('Density '+g.d); chip('Max fret '+g.m); chip('PM '+Math.round(g.p*100)+'%'); }
+    else chip('Hand-written');
+    chip(`${f.song.bars} bar${f.song.bars>1?'s':''} · ${f.song.res}th grid`);
+    chip('Drums: '+[...new Set(f.song.d.map(d=>(PATS[d[0]]||d[0]).replace(/ \(.*\)/,'')+(d[1]?' ×2':'')))].join(' / '));
+    row.append(pl, el('span','u',f.user), spec, el('span','m',new Date(f.created_at).toLocaleDateString()));
     if(mine.includes(f.id)){ const d = el('button','del','✕'); d.title = 'Delete (only you can delete your riffs)'; row.append(d); }
     list.append(row);
   }
@@ -878,6 +881,7 @@ $('favList').addEventListener('click', e=>{
 });
 $('fav').onclick = saveFav;
 $('who').onclick = askName;
+$('nameLater').onclick = () => $('nameDlg').close('cancel');
 $('favRefresh').onclick = loadFavs;
 
 song = load(); compile(); render();

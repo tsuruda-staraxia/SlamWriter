@@ -6,6 +6,7 @@
 const ORIGINS = ['https://tsuruda-staraxia.github.io', 'http://localhost:5178', 'http://127.0.0.1:5178'];
 const PATS = ['twobass','twobass_half','blast','hammer','bomb','skank','dbeat','rock','slam','follow','none'];
 const CYMS = ['hat','ride','china','crash'];
+const STYLES = ['quarter','chug','slam','tremolo'], CHORDS = ['diss','power','mix'];
 const MAX_PER_HOUR = 20, MAX_TOTAL = 5000, LIST_LIMIT = 200;
 
 const sha = async s => [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s)))]
@@ -26,7 +27,11 @@ function checkSong(s){
   }
   if(!Array.isArray(s.d) || s.d.length !== s.bars) return null;
   for(const d of s.d) if(!Array.isArray(d) || d.length !== 3 || !PATS.includes(d[0]) || !CYMS.includes(d[2])) return null;
-  return { v:1, bpm:s.bpm, bars:s.bars, res:s.res, n:s.n, pm:s.pm, r:s.r, d:s.d.map(d => [d[0], d[1] ? 1 : 0, d[2]]) };
+  const out = { v:1, bpm:s.bpm, bars:s.bars, res:s.res, n:s.n, pm:s.pm, r:s.r, d:s.d.map(d => [d[0], d[1] ? 1 : 0, d[2]]) };
+  const g = s.g;   // optional: generator settings the riff was made with
+  if(g && typeof g === 'object' && STYLES.includes(g.s) && CHORDS.includes(g.c) && isInt(g.d,1,5) && isInt(g.m,1,12)
+     && typeof g.p === 'number' && g.p >= 0 && g.p <= 1) out.g = { s:g.s, c:g.c, d:g.d, m:g.m, p:Math.round(g.p*100)/100 };
+  return out;
 }
 
 export default {
@@ -53,7 +58,7 @@ export default {
         const raw = await req.text();
         if(raw.length > 60000) return json({ error: 'too large' }, 413);
         let body; try{ body = JSON.parse(raw); }catch(e){ return json({ error: 'bad json' }, 400); }
-        const user = clean(body.user, 24), title = clean(body.title, 48) || 'Untitled', song = checkSong(body.song);
+        const user = clean(body.user, 24), title = clean(body.title, 48), song = checkSong(body.song);
         if(!user) return json({ error: 'user name required' }, 400);
         if(!song) return json({ error: 'invalid song' }, 400);
         if(typeof body.token !== 'string' || body.token.length < 16 || body.token.length > 100) return json({ error: 'invalid token' }, 400);
