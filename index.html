@@ -61,6 +61,32 @@
   .row.rest .cell{color:var(--dim);font-size:11px}
   .res32 .cell{font-size:10px}
   .ph{position:absolute;top:0;bottom:0;width:var(--cw);background:rgba(60,157,255,.22);pointer-events:none;display:none}
+  #fav{font-weight:700;color:#ff7aa8;border-color:#ff2d78;background:rgba(255,45,120,.12);padding:6px 12px;border-radius:999px}
+  #fav:hover{background:rgba(255,45,120,.25)}
+  #who{margin-left:auto;border-radius:999px;color:var(--dim)}
+  #who b{color:var(--text)}
+  #favs{margin:6px 16px 22px;border:1px solid #38383e;border-radius:10px;background:var(--panel);overflow:hidden}
+  #favs h2{display:flex;align-items:center;gap:10px;margin:0;padding:10px 14px;font-size:14px;border-bottom:1px solid #38383e}
+  #favs h2 small{font-weight:400;color:var(--dim);font-size:12px}
+  #favMsg{font-weight:400;font-size:12px;color:var(--accent);margin-left:auto}
+  #favList{max-height:420px;overflow:auto}
+  .fav{display:flex;align-items:center;gap:12px;padding:7px 14px;border-bottom:1px solid #303036}
+  .fav:last-child{border-bottom:0}
+  .fav:hover{background:#2c2c31}
+  .fav.on{background:rgba(60,157,255,.14)}
+  .fav .pl{width:34px;height:28px;padding:0;border-radius:999px;flex:none}
+  .fav.on .pl{background:var(--accent2);border-color:var(--accent2);color:#fff}
+  .fav .t{font-weight:600;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .fav .u{color:#ff7aa8;white-space:nowrap}
+  .fav .m{color:var(--dim);font-size:12px;white-space:nowrap;margin-left:auto}
+  .fav .del{padding:1px 7px;color:var(--dim)}
+  .fav.empty{color:var(--dim);justify-content:center;padding:18px}
+  dialog{background:var(--panel);color:var(--text);border:1px solid #48484f;border-radius:12px;padding:20px 22px;width:min(360px,90vw)}
+  dialog::backdrop{background:rgba(0,0,0,.6)}
+  dialog h3{margin:0 0 6px;font-size:16px}
+  dialog p{margin:0 0 12px;color:var(--dim);font-size:12px}
+  dialog input[type=text]{width:100%;font-size:15px;padding:8px 10px}
+  dialog .btns{display:flex;justify-content:flex-end;gap:8px;margin-top:14px}
   .help{padding:0 16px 20px;color:var(--dim);font-size:12px}
   kbd{background:#34343a;border:1px solid #48484f;border-radius:4px;padding:0 5px;font:11px ui-monospace,Menlo,monospace;color:var(--text)}
 </style>
@@ -70,6 +96,7 @@
   <h1>SLAM<span>WRITER</span><small>by Shogo Tsuruda</small></h1>
   <button id="play" class="primary">▶ Play</button>
   <button id="auto" title="Randomize style, chords, density and drums, then generate"><span class="dice">🎲</span>Randomize All</button>
+  <button id="fav" title="Save the current riff to the shared favorites list">♥ Save to Favorites</button>
   <label><input type="checkbox" id="loop" checked>Loop</label>
   <label>BPM <input type="number" id="bpm" min="40" max="300"></label>
   <label>Bars <input type="number" id="bars" min="1" max="16"></label>
@@ -80,6 +107,7 @@
   <button id="undo">↩ Undo</button>
   <button id="clear">Clear All</button>
   <button id="export">⬇ Export MIDI</button>
+  <button id="who" title="Change your user name"></button>
 </header>
 
 <div class="gen">
@@ -111,6 +139,24 @@
 </div>
 
 <div id="editor"></div>
+
+<section id="favs">
+  <h2>♥ Shared Favorites <small id="favCount"></small><button id="favRefresh" title="Reload the list">↻</button><span id="favMsg"></span></h2>
+  <div id="favList"></div>
+</section>
+
+<dialog id="nameDlg"><form method="dialog">
+  <h3>Your user name</h3>
+  <p>Shown next to the riffs you save to the shared favorites list. You can change it later.</p>
+  <input type="text" id="nameInput" maxlength="24" placeholder="e.g. riffmaster" autocomplete="off">
+  <div class="btns"><button value="cancel">Later</button><button value="ok" class="primary">OK</button></div>
+</form></dialog>
+<dialog id="saveDlg"><form method="dialog">
+  <h3>Save to Favorites</h3>
+  <p>Everyone using SlamWriter will see this riff and can play it.</p>
+  <input type="text" id="titleInput" maxlength="48" placeholder="Title" autocomplete="off">
+  <div class="btns"><button value="cancel">Cancel</button><button value="ok" class="primary">♥ Save</button></div>
+</form></dialog>
 
 <div class="help">
   7-string Drop A (A-E-A-D-G-B-E). Click a cell and type <kbd>0</kbd>–<kbd>9</kbd> to enter a fret (type again quickly for two digits, up to 24) ·
@@ -446,7 +492,7 @@ async function start(){
 function stop(){
   playing=false; clearInterval(timer);
   live.forEach(n=>{ try{n.stop()}catch(e){} }); live.clear();
-  $('play').textContent='▶ Play'; showHead(-1);
+  $('play').textContent='▶ Play'; showHead(-1); favPlaying = null; markFavs();
 }
 function drawHead(){
   if(!playing) return;
@@ -724,7 +770,119 @@ $('gen').onclick = () => { pushUndo(); generate(song.drums.map((_,i)=>i)); chang
 $('dAll').innerHTML = Object.entries(PATS).map(([k,v])=>`<option value="${k}">${v}</option>`).join('');
 $('dApply').onclick = () => { pushUndo(); song.drums.forEach(d=>{ d.pat=$('dAll').value; d.x2=$('dAllX2').checked; }); changed(true); };
 
+/* ---------------- shared favorites ---------------- */
+const API = 'https://slamwriter-api.tsuruda-282.workers.dev';
+const store = { get:k=>{ try{ return localStorage.getItem(k); }catch(e){ return null; } }, set:(k,v)=>{ try{ localStorage.setItem(k,v); }catch(e){} } };
+let userName = store.get('slamwriter.user') || '', favs = [], favPlaying = null;
+const myToken = () => { let t = store.get('slamwriter.token'); if(!t){ t = crypto.randomUUID()+crypto.randomUUID(); store.set('slamwriter.token',t); } return t; };
+const myIds = () => { try{ return JSON.parse(store.get('slamwriter.mine')) || []; }catch(e){ return []; } };
+const favMsg = (t, keep) => { $('favMsg').textContent = t; if(!keep) setTimeout(()=>{ if($('favMsg').textContent===t) $('favMsg').textContent=''; }, 4000); };
+
+function pack(s){
+  const n=[], pm=[], r=[];
+  for(let c=0;c<s.bars*s.res;c++){
+    for(let st=0;st<7;st++) if(s.grid[st][c]!=null) n.push([c,st,s.grid[st][c]]);
+    if(s.pm[c]) pm.push(c); if(s.rest[c]) r.push(c);
+  }
+  return {v:1, bpm:s.bpm, bars:s.bars, res:s.res, n, pm, r, d:s.drums.map(d=>[d.pat,d.x2?1:0,d.cym])};
+}
+function unpack(p){
+  const int = (v,lo,hi,def)=>Number.isInteger(v)&&v>=lo&&v<=hi?v:def;
+  const s = blankSong(int(p.bars,1,16,4), p.res===32?32:16), C = s.bars*s.res;
+  s.bpm = int(p.bpm,40,300,110);
+  for(const e of p.n||[]) if(int(e[0],0,C-1,-1)>=0 && int(e[1],0,6,-1)>=0 && int(e[2],0,24,-1)>=0) s.grid[e[1]][e[0]] = e[2];
+  for(const c of p.pm||[]) if(int(c,0,C-1,-1)>=0) s.pm[c] = true;
+  for(const c of p.r||[]) if(int(c,0,C-1,-1)>=0) s.rest[c] = true;
+  (p.d||[]).slice(0,s.bars).forEach((d,i)=>{ if(PATS[d[0]] && CYMS[d[2]]) s.drums[i] = {pat:d[0], x2:!!d[1], cym:d[2]}; });
+  return s;
+}
+function showWho(){ $('who').innerHTML = ''; $('who').append('👤 '); const b = document.createElement('b'); b.textContent = userName || 'Set name'; $('who').append(b); }
+function askName(){
+  return new Promise(res=>{
+    const d = $('nameDlg'); $('nameInput').value = userName; d.returnValue = '';
+    d.onclose = () => {
+      const v = $('nameInput').value.trim().slice(0,24);
+      if(d.returnValue==='ok' && v){ userName = v; store.set('slamwriter.user',v); showWho(); }
+      res(userName);
+    };
+    d.showModal(); $('nameInput').select();
+  });
+}
+function askTitle(){
+  return new Promise(res=>{
+    const d = $('saveDlg'); $('titleInput').value = `Riff ${song.bpm} BPM`; d.returnValue = '';
+    d.onclose = () => res(d.returnValue==='ok' ? ($('titleInput').value.trim() || 'Untitled') : null);
+    d.showModal(); $('titleInput').select();
+  });
+}
+async function loadFavs(){
+  try{
+    const r = await fetch(API+'/riffs'); if(!r.ok) throw 0;
+    favs = (await r.json()).riffs; renderFavs();
+  }catch(e){ favs = []; renderFavs(); favMsg('Could not load the shared list.', true); }
+}
+async function saveFav(){
+  const p = pack(song);
+  if(!p.n.length) return favMsg('Nothing to save yet — write or generate a riff first.');
+  if(!userName && !(await askName())) return;
+  const title = await askTitle(); if(title===null) return;
+  favMsg('Saving…', true);
+  try{
+    const r = await fetch(API+'/riffs', {method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({user:userName, title, song:p, token:myToken()})});
+    const j = await r.json(); if(!r.ok) throw new Error(j.error||'error');
+    store.set('slamwriter.mine', JSON.stringify(myIds().concat(j.riff.id)));
+    favs.unshift(j.riff); renderFavs(); favMsg('Saved to Shared Favorites ♥');
+    $('favs').scrollIntoView({behavior:'smooth', block:'nearest'});
+  }catch(e){ favMsg('Save failed: '+e.message); }
+}
+async function deleteFav(id){
+  if(!confirm('Delete this riff from the shared list?')) return;
+  try{
+    const r = await fetch(API+'/riffs/'+id, {method:'DELETE', headers:{'X-Token':myToken()}});
+    if(!r.ok) throw new Error((await r.json()).error||'error');
+    favs = favs.filter(f=>f.id!==id); renderFavs(); favMsg('Deleted.');
+  }catch(e){ favMsg('Delete failed: '+e.message); }
+}
+function playFav(id){
+  const f = favs.find(x=>x.id===id); if(!f) return;
+  if(favPlaying===id && playing) return stop();
+  if(playing) stop();
+  pushUndo(); song = unpack(f.song); cursor = {s:0,c:0}; changed(true);
+  favPlaying = id; markFavs(); start();
+}
+function renderFavs(){
+  const list = $('favList'), mine = myIds(); list.innerHTML = '';
+  $('favCount').textContent = favs.length ? `${favs.length} riff${favs.length>1?'s':''}` : '';
+  if(!favs.length){ const e = document.createElement('div'); e.className='fav empty'; e.textContent='No saved riffs yet. Hit “♥ Save to Favorites” to add the first one.'; list.append(e); return; }
+  const el = (tag,cls,text)=>{ const n=document.createElement(tag); n.className=cls; if(text!=null) n.textContent=text; return n; };
+  for(const f of favs){
+    const row = el('div','fav'); row.dataset.id = f.id;
+    const pl = el('button','pl','▶'); pl.title = 'Load into the editor and play';
+    row.append(pl, el('span','t',f.title), el('span','u','by '+f.user),
+      el('span','m',`${f.song.bpm} BPM · ${f.song.bars} bar${f.song.bars>1?'s':''} · ${new Date(f.created_at).toLocaleDateString()}`));
+    if(mine.includes(f.id)){ const d = el('button','del','✕'); d.title = 'Delete (only you can delete your riffs)'; row.append(d); }
+    list.append(row);
+  }
+  markFavs();
+}
+function markFavs(){
+  document.querySelectorAll('#favList .fav[data-id]').forEach(r=>{
+    const on = r.dataset.id===favPlaying; r.classList.toggle('on',on); r.querySelector('.pl').textContent = on?'■':'▶';
+  });
+}
+$('favList').addEventListener('click', e=>{
+  const row = e.target.closest('.fav[data-id]'); if(!row) return;
+  if(e.target.closest('.del')) deleteFav(row.dataset.id);
+  else if(e.target.closest('.pl')) playFav(row.dataset.id);
+});
+$('fav').onclick = saveFav;
+$('who').onclick = askName;
+$('favRefresh').onclick = loadFavs;
+
 song = load(); compile(); render();
+showWho(); loadFavs();
+if(!userName) askName();
 </script>
 </body>
 </html>

@@ -1,0 +1,8 @@
+name = "slamwriter-api"
+main = "src/index.js"
+compatibility_date = "2025-01-01"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "slamwriter"
+database_id = "e308a060-d68f-4449-86ef-375e9f4f4a3e"
